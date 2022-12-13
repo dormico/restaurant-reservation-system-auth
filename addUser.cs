@@ -7,29 +7,48 @@ using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using Microsoft.Azure.Documents.Client;
 
-namespace Auth
+namespace Auth;
+public static class AddUser
 {
-    public static class addUser
+    [FunctionName("AddUser")]
+    public static async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequest req,
+        [CosmosDB(
+            databaseName: "Restaurants",
+            containerName: "Users",
+            Connection = "CosmosDBConnectionString")]IAsyncCollector<dynamic> documentsOut,
+        ILogger log)
     {
-        [FunctionName("addUser")]
-        public static async Task<IActionResult> Run(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequest req,
-            ILogger log)
+        log.LogInformation("AddUser function processed a request.");
+
+        IActionResult returnValue = null;
+        try
         {
-            log.LogInformation("C# HTTP trigger function processed a request.");
+            string requestBody = String.Empty;
+            using (StreamReader streamReader = new StreamReader(req.Body))
+            {
+                requestBody = await streamReader.ReadToEndAsync();
+            }
+            dynamic data = JsonConvert.DeserializeObject<User>(requestBody);
 
-            string name = req.Query["name"];
+            User newUser = data;
 
-            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            dynamic data = JsonConvert.DeserializeObject(requestBody);
-            name = name ?? data?.name;
+            newUser.id = newUser.Email;
+            newUser.partitionKey = newUser.Email;
 
-            string responseMessage = string.IsNullOrEmpty(name)
-                ? "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response."
-                : $"Hello, {name}. This HTTP triggered function executed successfully.";
+            await documentsOut.AddAsync(newUser);
 
-            return new OkObjectResult(responseMessage);
+            returnValue = new OkObjectResult(new { id = newUser.id });
         }
+        catch (Exception ex)
+        {
+            log.LogError($"Could not insert user. Exception thrown: {ex.Message}");
+            returnValue = new StatusCodeResult(StatusCodes.Status500InternalServerError);
+        }
+
+        return returnValue;
     }
 }
+
